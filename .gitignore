@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.uv-cache/
+.worktrees/
+dist/
+.DS_Store
+
+.claude/settings.local.json
+.env
+.env.*
+*.pem

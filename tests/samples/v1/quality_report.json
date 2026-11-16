@@ -1,0 +1,464 @@
+{
+  "contract_version": "v1",
+  "run_id": "sample-v1",
+  "generated_at": "2026-01-31T00:00:00Z",
+  "source": "fixtures",
+  "status": "pass",
+  "tables": [
+    {
+      "table": "distribution_centers",
+      "rows_ingested": 3,
+      "rows_quarantined": 0
+    },
+    {
+      "table": "products",
+      "rows_ingested": 24,
+      "rows_quarantined": 0
+    },
+    {
+      "table": "orders",
+      "rows_ingested": 191,
+      "rows_quarantined": 0
+    },
+    {
+      "table": "order_items",
+      "rows_ingested": 439,
+      "rows_quarantined": 0
+    },
+    {
+      "table": "users",
+      "rows_ingested": 60,
+      "rows_quarantined": 0
+    },
+    {
+      "table": "events",
+      "rows_ingested": 2604,
+      "rows_quarantined": 0
+    }
+  ],
+  "checks": [
+    {
+      "name": "distribution_centers.id.not_null",
+      "table": "distribution_centers",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id is NULL"
+    },
+    {
+      "name": "distribution_centers.name.not_null",
+      "table": "distribution_centers",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): name is NULL"
+    },
+    {
+      "name": "distribution_centers.id.unique",
+      "table": "distribution_centers",
+      "check_type": "unique",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id appears more than once (all copies quarantined)"
+    },
+    {
+      "name": "distribution_centers.volume.not_empty",
+      "table": "distribution_centers",
+      "check_type": "volume",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "3 row(s) ingested"
+    },
+    {
+      "name": "distribution_centers.quarantine_rate",
+      "table": "distribution_centers",
+      "check_type": "quarantine_rate",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0.00% of rows quarantined (limit 1%)"
+    },
+    {
+      "name": "products.id.not_null",
+      "table": "products",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id is NULL"
+    },
+    {
+      "name": "products.category.not_null",
+      "table": "products",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): category is NULL"
+    },
+    {
+      "name": "products.distribution_center_id.not_null",
+      "table": "products",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): distribution_center_id is NULL"
+    },
+    {
+      "name": "products.id.unique",
+      "table": "products",
+      "check_type": "unique",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id appears more than once (all copies quarantined)"
+    },
+    {
+      "name": "products.distribution_center_id.referential",
+      "table": "products",
+      "check_type": "referential",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): distribution center missing or quarantined"
+    },
+    {
+      "name": "products.volume.not_empty",
+      "table": "products",
+      "check_type": "volume",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "24 row(s) ingested"
+    },
+    {
+      "name": "products.quarantine_rate",
+      "table": "products",
+      "check_type": "quarantine_rate",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0.00% of rows quarantined (limit 1%)"
+    },
+    {
+      "name": "orders.order_id.not_null",
+      "table": "orders",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): order_id is NULL"
+    },
+    {
+      "name": "orders.status.not_null",
+      "table": "orders",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): status is NULL"
+    },
+    {
+      "name": "orders.order_id.unique",
+      "table": "orders",
+      "check_type": "unique",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): order_id appears more than once (all copies quarantined)"
+    },
+    {
+      "name": "orders.status.accepted_values",
+      "table": "orders",
+      "check_type": "accepted_values",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): status is not a known status"
+    },
+    {
+      "name": "orders.lifecycle.chronology",
+      "table": "orders",
+      "check_type": "chronology",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): lifecycle timestamps are out of order"
+    },
+    {
+      "name": "orders.volume.not_empty",
+      "table": "orders",
+      "check_type": "volume",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "191 row(s) ingested"
+    },
+    {
+      "name": "orders.quarantine_rate",
+      "table": "orders",
+      "check_type": "quarantine_rate",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0.00% of rows quarantined (limit 1%)"
+    },
+    {
+      "name": "order_items.id.not_null",
+      "table": "order_items",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id is NULL"
+    },
+    {
+      "name": "order_items.order_id.not_null",
+      "table": "order_items",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): order_id is NULL"
+    },
+    {
+      "name": "order_items.product_id.not_null",
+      "table": "order_items",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): product_id is NULL"
+    },
+    {
+      "name": "order_items.status.not_null",
+      "table": "order_items",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): status is NULL"
+    },
+    {
+      "name": "order_items.sale_price.not_null",
+      "table": "order_items",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): sale_price is NULL"
+    },
+    {
+      "name": "order_items.id.unique",
+      "table": "order_items",
+      "check_type": "unique",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id appears more than once (all copies quarantined)"
+    },
+    {
+      "name": "order_items.status.accepted_values",
+      "table": "order_items",
+      "check_type": "accepted_values",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): status is not a known status"
+    },
+    {
+      "name": "order_items.sale_price.positive",
+      "table": "order_items",
+      "check_type": "range",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): sale_price is zero or negative"
+    },
+    {
+      "name": "order_items.lifecycle.chronology",
+      "table": "order_items",
+      "check_type": "chronology",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): lifecycle timestamps are out of order"
+    },
+    {
+      "name": "order_items.returned_at.matches_status",
+      "table": "order_items",
+      "check_type": "consistency",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): returned_at is set without status Returned, or the reverse"
+    },
+    {
+      "name": "order_items.order_id.referential",
+      "table": "order_items",
+      "check_type": "referential",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): order missing or quarantined"
+    },
+    {
+      "name": "order_items.product_id.referential",
+      "table": "order_items",
+      "check_type": "referential",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): product missing or quarantined"
+    },
+    {
+      "name": "order_items.volume.not_empty",
+      "table": "order_items",
+      "check_type": "volume",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "439 row(s) ingested"
+    },
+    {
+      "name": "order_items.quarantine_rate",
+      "table": "order_items",
+      "check_type": "quarantine_rate",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0.00% of rows quarantined (limit 1%)"
+    },
+    {
+      "name": "users.id.not_null",
+      "table": "users",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id is NULL"
+    },
+    {
+      "name": "users.id.unique",
+      "table": "users",
+      "check_type": "unique",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id appears more than once (all copies quarantined)"
+    },
+    {
+      "name": "users.volume.not_empty",
+      "table": "users",
+      "check_type": "volume",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "60 row(s) ingested"
+    },
+    {
+      "name": "users.quarantine_rate",
+      "table": "users",
+      "check_type": "quarantine_rate",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0.00% of rows quarantined (limit 1%)"
+    },
+    {
+      "name": "events.id.not_null",
+      "table": "events",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id is NULL"
+    },
+    {
+      "name": "events.session_id.not_null",
+      "table": "events",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): session_id is NULL"
+    },
+    {
+      "name": "events.event_type.not_null",
+      "table": "events",
+      "check_type": "not_null",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): event_type is NULL"
+    },
+    {
+      "name": "events.id.unique",
+      "table": "events",
+      "check_type": "unique",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): id appears more than once (all copies quarantined)"
+    },
+    {
+      "name": "events.event_type.accepted_values",
+      "table": "events",
+      "check_type": "accepted_values",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): event_type is not a known event type"
+    },
+    {
+      "name": "events.uri.product_format",
+      "table": "events",
+      "check_type": "format",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): a product event's uri is not /product/<id>"
+    },
+    {
+      "name": "events.product_id.referential",
+      "table": "events",
+      "check_type": "referential",
+      "severity": "warning",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0 row(s): a product event's product is missing or quarantined"
+    },
+    {
+      "name": "events.volume.not_empty",
+      "table": "events",
+      "check_type": "volume",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "2604 row(s) ingested"
+    },
+    {
+      "name": "events.quarantine_rate",
+      "table": "events",
+      "check_type": "quarantine_rate",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "0.00% of rows quarantined (limit 1%)"
+    },
+    {
+      "name": "orders.created_at.freshness",
+      "table": "orders",
+      "check_type": "freshness",
+      "severity": "critical",
+      "status": "pass",
+      "failed_rows": 0,
+      "message": "newest order 2026-01-30 20:32, as_of 2026-01-31 00:00 UTC (limit 2 days)"
+    }
+  ]
+}

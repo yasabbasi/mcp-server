@@ -1,0 +1,3 @@
+# Sample checksums are computed over exact bytes; never convert line endings.
+tests/samples/** -text
+docs/contract.md -text

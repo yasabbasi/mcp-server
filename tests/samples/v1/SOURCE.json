@@ -1,0 +1,14 @@
+{
+  "repo": "yasabbasi/data-pipeline",
+  "tag": "contract-v1",
+  "commit": "1823391fa705f011abe1e4f3aefbd61e29e53f5f",
+  "path": "samples/v1",
+  "sha256": {
+    "docs/contract.md": "ae8ff8ffb808839fb7bd946c33a0ba02445e491e966aa79de37b4cbbc265f73a",
+    "samples/v1/parquet/daily_metrics.parquet": "5cab4cc418519b07f8cf8aa6c8dbee7527978222cd7c0a05b28cf093cd3a7bc0",
+    "samples/v1/parquet/daily_totals.parquet": "4fe36afacee24026c67395d5bfa6493be9b28e95b2a77e6323ff12968e27a045",
+    "samples/v1/parquet/metric_definitions.parquet": "deaf3c83528ebf0f22f47dd9ace33ada56044d35283d8a1f67d923fb663427b9",
+    "samples/v1/parquet/run_metadata.parquet": "54217535f7a956c087593d2ed428046dbb25ecca1d663318faf00efb698d5503",
+    "samples/v1/quality_report.json": "800f878ad0017c31f6499b81adbcad6b0c610e1342154624a1456598a975919a"
+  }
+}
