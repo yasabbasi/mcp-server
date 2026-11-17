@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from mcp_server.outputs import (
     METRICS,
+    TABLES,
     Check,
     Name,
     Run,
@@ -24,13 +25,18 @@ ROUNDED = "Ratios are fractions between 0 and 1, rounded to four places."
 BREAKDOWN = (
     "One metric split by `by`, `category` or `distribution_center`, over `start` to `end` (ISO "
     "dates, both included). `slices` holds each slice's `name` and `value`, largest first; at "
-    "most 50 are returned, and `truncated` says whether there were more. Only `revenue`, `units`, "
-    "`returned_units` and `return_rate` can be split: the first three are summed per slice, and "
-    "`return_rate` is the slice's returned units over its units, null when it has no units. "
-    f"{ROUNDED} The "
-    "other metrics do not add up across slices, so call `metrics_daily_totals` for them. "
-    "`includes_provisional` is true when the range reaches `restated_from`, so the numbers may "
-    "still change. Call `metrics_freshness` for the dates the data covers."
+    "most 50 are returned, and `truncated` says whether there were more. Counts and money are "
+    "summed over the days, and `aov`, `return_rate` and `conversion_rate` are recomputed from the "
+    f"slice's summed parts; a ratio is null when its denominator is 0. {ROUNDED} `orders`, "
+    "`product_view_sessions` and `converted_sessions` are distinct within the slice, and they and "
+    "every ratio must not be summed across slices; a slice's `aov` is revenue per order in that "
+    "slice. `adds_up` says whether the slices add up to the total, true only for `revenue`, "
+    "`units` and `returned_units`. `approximate` is true for the session metrics over more than "
+    "one day, because a session that crosses midnight is counted on both days. On contract v1 "
+    "outputs only `revenue`, `units`, `returned_units` and `return_rate` can be split; call "
+    "`metrics_daily_totals` for the others. `includes_provisional` is true when the range "
+    "reaches `restated_from`, so the numbers may still change. Call `metrics_freshness` for the "
+    "dates the data covers and the contract version."
 )
 DAILY_TOTALS = (
     "The published totals from `start` to `end` (ISO dates, both included) by `grain`: `day`, "
@@ -116,8 +122,14 @@ order by
 limit ?
 """
 SLICES = {"category": "category", "distribution_center": "distribution_center_name"}
-# The metrics that can be split by slice: the additive ones and the ratio of two of them.
-SPLITS = {"v1": ("revenue", "units", "returned_units", "return_rate")}
+SLICE_TABLES = {
+    "category": "daily_by_category",
+    "distribution_center": "daily_by_distribution_center",
+}
+# The metrics that can be split by slice. On v1 the additive ones and the ratio of two of them;
+# v2 publishes every metric per slice.
+SPLITS = {"v1": ("revenue", "units", "returned_units", "return_rate"), "v2": METRICS["v2"]}
+ADDITIVE = ("revenue", "units", "returned_units")
 # Why the other metrics can't be split, in the contract's words.
 NOT_ADDITIVE = {
     "v1": (
@@ -165,6 +177,8 @@ class Breakdown(BaseModel):
     by: Name
     slices: tuple[Slice, ...]
     truncated: bool
+    adds_up: bool
+    approximate: bool
     includes_provisional: bool
     restated_from: date
 
@@ -275,13 +289,18 @@ def metrics_breakdown(start: date, end: date, metric: str, by: str) -> Breakdown
     if by not in SLICES:
         raise ToolError(f"`by` is not a way to split. Use one of: {', '.join(SLICES)}.")
     check_range(run, start, end)
+    table = SLICE_TABLES[by]
+    if table not in TABLES[run.contract_version]:
+        table = "daily_metrics"
     sql = SLICES_SQL.format(name=quoted(SLICES[by]), value=summed(metric))
-    found = rows(sql, [parquet("daily_metrics"), start, end, MAX_SLICES + 1])
+    found = rows(sql, [parquet(table), start, end, MAX_SLICES + 1])
     return Breakdown(
         metric=metric,
         by=by,
         slices=tuple(Slice(name=name, value=value) for name, value in found[:MAX_SLICES]),
         truncated=len(found) > MAX_SLICES,
+        adds_up=metric in ADDITIVE,
+        approximate=metric in SESSION and end > start,
         includes_provisional=end >= run.restated_from,
         restated_from=run.restated_from,
     )

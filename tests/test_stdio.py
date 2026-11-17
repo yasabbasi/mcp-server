@@ -23,5 +23,5 @@ async def test_the_cli_entry_answers_a_tool_call_with_only_mcp_on_stdout(samples
     async with Client(server, message_handler=collect) as client:
         result = await client.call_tool("metrics_freshness")
     assert not result.is_error
-    assert result.structured_content["run_id"] == "sample-v1"
+    assert result.structured_content["run_id"] == f"sample-{samples.name}"
     assert not_mcp == []

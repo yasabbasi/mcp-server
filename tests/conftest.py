@@ -6,8 +6,9 @@ import pytest
 from mcp import Client
 
 from mcp_server.cli import registered
+from mcp_server.outputs import SUPPORTED
 
-SAMPLES = Path(__file__).resolve().parent / "samples" / "v1"
+SAMPLES = Path(__file__).resolve().parent / "samples"
 
 
 @pytest.fixture
@@ -15,11 +16,19 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+@pytest.fixture(params=SUPPORTED)
+def version(request: pytest.FixtureRequest) -> str:
+    """Each supported contract version; a test parametrizes `version` to read only some."""
+    found: str = request.param
+    return found
+
+
 @pytest.fixture(autouse=True)
-def samples(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point DATA_OUTPUT_DIR at the copied v1 samples, which every test reads by default."""
-    monkeypatch.setenv("DATA_OUTPUT_DIR", str(SAMPLES))
-    return SAMPLES
+def samples(version: str, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point DATA_OUTPUT_DIR at the copied samples of the version, which every test reads."""
+    folder = SAMPLES / version
+    monkeypatch.setenv("DATA_OUTPUT_DIR", str(folder))
+    return folder
 
 
 @pytest.fixture

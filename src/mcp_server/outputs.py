@@ -12,22 +12,25 @@ import duckdb
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
-SUPPORTED = ("v1",)
+SUPPORTED = ("v1", "v2")
 MAX_MESSAGE = 300
-TABLES = ("daily_metrics", "daily_totals", "metric_definitions", "run_metadata")
-METRICS: dict[str, tuple[str, ...]] = {
-    "v1": (
-        "revenue",
-        "orders",
-        "units",
-        "returned_units",
-        "aov",
-        "return_rate",
-        "product_view_sessions",
-        "converted_sessions",
-        "conversion_rate",
-    ),
+V1_TABLES = ("daily_metrics", "daily_totals", "metric_definitions", "run_metadata")
+TABLES: dict[str, tuple[str, ...]] = {
+    "v1": V1_TABLES,
+    "v2": (*V1_TABLES, "daily_by_category", "daily_by_distribution_center"),
 }
+V1_METRICS = (
+    "revenue",
+    "orders",
+    "units",
+    "returned_units",
+    "aov",
+    "return_rate",
+    "product_view_sessions",
+    "converted_sessions",
+    "conversion_rate",
+)
+METRICS: dict[str, tuple[str, ...]] = {"v1": V1_METRICS, "v2": V1_METRICS}
 ENV = "DATA_OUTPUT_DIR"
 SET_ENV = f"Set {ENV} to a data-pipeline output directory."
 
@@ -124,7 +127,7 @@ def output_dir() -> Path:
 
 def parquet(table: str) -> str:
     """Return the path of one contract table's Parquet file, which must exist."""
-    if table not in TABLES:
+    if not any(table in tables for tables in TABLES.values()):
         raise ValueError(f"{table} is not a contract table")
     path = output_dir() / "parquet" / f"{table}.parquet"
     if not path.is_file():

@@ -107,22 +107,35 @@ select
 from read_parquet(?)
 """
 METRICS_WITHOUT_UNITS = """
-select
-    metric_date,
-    category,
-    distribution_center_id,
-    distribution_center_name,
-    revenue,
-    orders,
+select * replace (
     cast(0 as bigint) as units,
-    cast(0 as bigint) as returned_units,
-    aov,
-    return_rate,
-    product_view_sessions,
-    converted_sessions,
-    conversion_rate
+    cast(0 as bigint) as returned_units
+)
 from read_parquet(?)
 """
+# Each slice's metric parts summed over the dates; the placeholder takes a column of the table.
+SAMPLE_SLICE_PARTS = """
+select
+    {name} as name,
+    sum(revenue) as revenue,
+    sum(orders) as orders,
+    sum(units) as units,
+    sum(returned_units) as returned_units,
+    sum(product_view_sessions) as product_view_sessions,
+    sum(converted_sessions) as converted_sessions
+from read_parquet(?)
+where metric_date between ? and ?
+group by {name}
+"""
+SLICE_TABLES = {
+    "category": ("daily_by_category", "category"),
+    "distribution_center": ("daily_by_distribution_center", "distribution_center_name"),
+}
+PARTS = {
+    "aov": ("revenue", "orders"),
+    "return_rate": ("returned_units", "units"),
+    "conversion_rate": ("converted_sessions", "product_view_sessions"),
+}
 COUNTS = ("orders", "units", "returned_units", "product_view_sessions", "converted_sessions")
 RATES = ("return_rate", "conversion_rate")
 ROUNDED = "Ratios are fractions between 0 and 1, rounded to four places."
@@ -195,6 +208,22 @@ def sample_slices(samples: Path, by: str, start: date, end: date) -> dict[str, d
             slice_sums["units"] += units
             slice_sums["returned_units"] += returned_units
     return sums
+
+
+def sample_slice_values(
+    samples: Path, by: str, metric: str, start: date, end: date
+) -> dict[str, Any]:
+    """Return one metric per slice of the sample's slice table, from the parts summed over dates."""
+    table, name = SLICE_TABLES[by]
+    sql = SAMPLE_SLICE_PARTS.format(name=name)
+    with duckdb.connect() as con:
+        found = con.execute(sql, [str(samples / "parquet" / f"{table}.parquet"), start, end])
+        columns = [column[0] for column in found.description]
+        parts = [dict(zip(columns, row, strict=True)) for row in found.fetchall()]
+    if metric not in PARTS:
+        return {slice_parts["name"]: slice_parts[metric] for slice_parts in parts}
+    over, under = PARTS[metric]
+    return {p["name"]: p[over] / p[under] if p[under] else None for p in parts}
 
 
 async def totals(client: Client, **arguments: object) -> dict[str, Any]:
@@ -299,10 +328,13 @@ async def test_breakdown_rounds_return_rate_to_four_places(client: Client) -> No
     assert values == [round(value, 4) for value in values]
 
 
+@pytest.mark.parametrize(
+    ("version", "table"), [("v1", "daily_metrics"), ("v2", "daily_by_category")]
+)
 async def test_breakdown_return_rate_is_null_when_the_slice_has_no_units(
-    client: Client, outputs: Path, samples: Path
+    client: Client, outputs: Path, samples: Path, table: str
 ) -> None:
-    source, target = (folder / "parquet" / "daily_metrics.parquet" for folder in (samples, outputs))
+    source, target = (folder / "parquet" / f"{table}.parquet" for folder in (samples, outputs))
     with duckdb.connect() as con:
         con.sql(METRICS_WITHOUT_UNITS, params=[str(source)]).write_parquet(str(target))
     found = await breakdown(
@@ -312,6 +344,7 @@ async def test_breakdown_return_rate_is_null_when_the_slice_has_no_units(
     assert all(s["value"] is None for s in found["slices"])
 
 
+@pytest.mark.parametrize("version", ["v1"])
 @pytest.mark.parametrize(
     "metric", ["orders", "aov", "product_view_sessions", "converted_sessions", "conversion_rate"]
 )
@@ -329,13 +362,14 @@ async def test_breakdown_refuses_a_metric_that_does_not_add_up_across_slices(
     assert f"split one of: {SPLITS}." in message
 
 
+@pytest.mark.parametrize(("version", "splits"), [("v1", SPLITS), ("v2", ", ".join(METRICS["v2"]))])
 async def test_breakdown_refuses_an_unknown_metric_with_the_metrics_it_splits(
-    client: Client,
+    client: Client, splits: str
 ) -> None:
     message = await breakdown_refusal(
         client, start="2026-01-01", end="2026-01-30", metric="profit", by="category"
     )
-    assert f"That is not a metric. Use one of: {SPLITS}." in message
+    assert f"That is not a metric. Use one of: {splits}." in message
 
 
 async def test_breakdown_refuses_an_unknown_by_with_the_valid_values(client: Client) -> None:
@@ -403,6 +437,92 @@ async def test_breakdown_result_for_the_samples_is_under_4000_characters(
     )
     assert not result.is_error
     assert len(text(result)) < 4000
+
+
+@pytest.mark.parametrize("version", ["v2"])
+@pytest.mark.parametrize("by", ["category", "distribution_center"])
+@pytest.mark.parametrize("metric", METRICS["v2"])
+async def test_breakdown_on_v2_splits_every_metric_from_the_slice_table(
+    client: Client, samples: Path, by: str, metric: str
+) -> None:
+    expected = sample_slice_values(samples, by, metric, date(2026, 1, 5), date(2026, 1, 20))
+    found = await breakdown(client, start="2026-01-05", end="2026-01-20", metric=metric, by=by)
+    assert {s["name"]: s["value"] for s in found["slices"]} == {
+        name: pytest.approx(value, abs=0.005) for name, value in expected.items()
+    }
+
+
+@pytest.mark.parametrize("version", ["v2"])
+@pytest.mark.parametrize(
+    "metric", ["orders", "units", "returned_units", "product_view_sessions", "converted_sessions"]
+)
+async def test_breakdown_on_v2_counts_are_integers(client: Client, metric: str) -> None:
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric=metric, by="distribution_center"
+    )
+    assert all(type(s["value"]) is int for s in found["slices"])
+
+
+@pytest.mark.parametrize("metric", ["revenue", "units", "returned_units", "return_rate"])
+async def test_breakdown_adds_up_only_for_an_additive_metric(client: Client, metric: str) -> None:
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric=metric, by="category"
+    )
+    assert found["adds_up"] is (metric != "return_rate")
+
+
+@pytest.mark.parametrize("version", ["v2"])
+@pytest.mark.parametrize(
+    "metric", ["orders", "aov", "product_view_sessions", "converted_sessions", "conversion_rate"]
+)
+async def test_breakdown_on_v2_does_not_add_up_for_a_metric_distinct_within_the_slice(
+    client: Client, metric: str
+) -> None:
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric=metric, by="category"
+    )
+    assert found["adds_up"] is False
+
+
+@pytest.mark.parametrize("version", ["v2"])
+@pytest.mark.parametrize(
+    ("metric", "end", "approximate"),
+    [
+        ("product_view_sessions", "2026-01-02", True),
+        ("conversion_rate", "2026-01-02", True),
+        ("converted_sessions", "2026-01-01", False),
+        ("orders", "2026-01-02", False),
+    ],
+)
+async def test_breakdown_on_v2_is_approximate_for_session_metrics_over_more_than_one_day(
+    client: Client, metric: str, end: str, approximate: bool
+) -> None:
+    found = await breakdown(client, start="2026-01-01", end=end, metric=metric, by="category")
+    assert found["approximate"] is approximate
+
+
+@pytest.mark.parametrize("version", ["v2"])
+async def test_breakdown_on_v2_of_orders_by_category_is_under_4000_characters(
+    client: Client,
+) -> None:
+    result = await client.call_tool(
+        "metrics_breakdown",
+        {"start": "2026-01-01", "end": "2026-01-30", "metric": "orders", "by": "category"},
+    )
+    assert not result.is_error, text(result)
+    assert len(text(result)) < 4000
+
+
+async def test_breakdown_description_states_the_slice_caveats_in_the_contracts_words(
+    client: Client,
+) -> None:
+    (tool,) = (t for t in (await client.list_tools()).tools if t.name == "metrics_breakdown")
+    description = " ".join((tool.description or "").split())
+    assert (
+        "`orders`, `product_view_sessions` and `converted_sessions` are distinct within the "
+        "slice, and they and every ratio must not be summed across slices"
+    ) in description
+    assert "a slice's `aov` is revenue per order in that slice" in description
 
 
 @pytest.mark.parametrize(
@@ -661,13 +781,13 @@ async def test_explain_does_not_return_a_description_over_500_characters(
     assert text(result) == "Error executing tool metrics_explain"
 
 
-async def test_freshness_describes_the_sample_run(client: Client) -> None:
+async def test_freshness_describes_the_sample_run(client: Client, version: str) -> None:
     result = await client.call_tool("metrics_freshness")
     assert not result.is_error
     assert result.structured_content == {
-        "run_id": "sample-v1",
+        "run_id": f"sample-{version}",
         "source": "fixtures",
-        "contract_version": "v1",
+        "contract_version": version,
         "generated_at": "2026-01-31T00:00:00Z",
         "data_min_date": "2026-01-01",
         "data_max_date": "2026-01-30",
@@ -745,9 +865,9 @@ async def test_list_does_not_return_a_label_that_is_not_a_short_name(
     assert text(result) == "Error executing tool metrics_list"
 
 
-async def test_quality_report_summarizes_the_sample_report(client: Client) -> None:
+async def test_quality_report_summarizes_the_sample_report(client: Client, version: str) -> None:
     assert await quality_report(client) == {
-        "run_id": "sample-v1",
+        "run_id": f"sample-{version}",
         "status": "pass",
         "tables": [
             {"table": "distribution_centers", "rows_ingested": 3, "rows_quarantined": 0},
@@ -824,7 +944,7 @@ async def test_quality_report_refuses_another_contract_version_with_what_to_do(
 ) -> None:
     change_report(outputs, lambda report: report.update(contract_version="v9"))
     message = await quality_report_refusal(client)
-    assert "contract v9. This server reads v1. Upgrade mcp-server" in message
+    assert "contract v9. This server reads v1, v2. Upgrade mcp-server" in message
 
 
 async def test_quality_report_does_not_repeat_a_version_that_is_not_a_version_name(
