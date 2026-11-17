@@ -13,7 +13,7 @@ flowchart LR
 
 | What | Number | How to check |
 |---|---|---|
-| Tests | 294, all offline on the copied samples of v1 and v2, in about 6 seconds | `uv run pytest -q` |
+| Tests | 298, all offline on the copied samples of v1 and v2, in about 6 seconds | `uv run pytest -q` |
 | Tools | 6, all in the `metrics` group | `grep -c "@server.tool" src/mcp_server/metrics.py` |
 | Copied files | 13: five v1 sample files from data-pipeline's `contract-v1` tag at commit `1823391`, and seven v2 sample files and the contract doc from its `contract-v2` tag at commit `dc875dd` | `tests/samples/v*/SOURCE.json`, and `make sync-samples` prints the count |
 | Size of a `metrics_freshness` result | 271 characters, for a live pipeline run | Count the result shown in the quickstart |
@@ -27,6 +27,22 @@ The six tools, each on outputs of contract v1 or v2:
 - `metrics_freshness`: the run the metrics come from, its data range and its quality status.
 - `metrics_list`: every metric with its label, unit and whether it is additive.
 - `metrics_quality_report`: the run's quality status, row counts and checks that did not pass.
+
+### A real exchange
+
+On 2026-11-16 the owner asked Claude the same question twice through this server, on the
+outputs of a live run of [data-pipeline](https://github.com/yasabbasi/data-pipeline): 2,875
+days, 2019-01-02 to 2026-11-15. The tools were built by
+[task-agent](https://github.com/yasabbasi/task-agent), the loop that works this repo's issues.
+
+> Using the tools server, what were orders by category in October 2026?
+
+- **Contract v1:** Claude answered that the server can't give orders by category, because one
+  order can contain items from several categories. It gave the total, 5,177 orders, and units
+  by category instead.
+- **Contract v2:** Claude answered Intimates 536, Tops & Tees 507, Jeans 496, Sleep & Lounge
+  480, Swim 459 and 21 more categories, and added: "Don't add these up for a total. One order
+  can include items from several categories, so it gets counted in each of them."
 
 ## Quickstart
 

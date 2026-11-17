@@ -18,3 +18,20 @@ def test_readme_only_names_make_targets_that_exist() -> None:
     targets = set(re.findall(r"^([a-z-]+):", (ROOT / "Makefile").read_text(), flags=re.M))
     named = set(re.findall(r"`make ([a-z-]+)", (ROOT / "README.md").read_text()))
     assert named <= targets
+
+
+def readme_part(heading: str) -> str:
+    parts = re.split(r"^(#+ .*)$", (ROOT / "README.md").read_text(), flags=re.M)
+    return parts[parts.index(heading) + 1]
+
+
+def test_readme_shows_a_real_exchange_after_the_key_numbers() -> None:
+    headings = re.findall(r"^#+ .*$", (ROOT / "README.md").read_text(), flags=re.M)
+    assert headings.index("### A real exchange") == headings.index("## Key numbers") + 1
+    assert len(readme_part("### A real exchange").strip().splitlines()) <= 16
+
+
+def test_readme_exchange_links_the_sibling_repos() -> None:
+    part = readme_part("### A real exchange")
+    assert "https://github.com/yasabbasi/data-pipeline" in part
+    assert "https://github.com/yasabbasi/task-agent" in part
