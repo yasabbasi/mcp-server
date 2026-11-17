@@ -67,6 +67,22 @@ select
     conversion_rate
 from read_parquet(?)
 """
+TOTALS_STRETCHED = """
+select
+    metric_date - cast(30 * copies.copy as integer) as metric_date,
+    revenue,
+    orders,
+    units,
+    returned_units,
+    aov,
+    return_rate,
+    product_view_sessions,
+    converted_sessions,
+    conversion_rate
+from read_parquet(?)
+cross join generate_series(0, 7) as copies(copy)
+where metric_date - cast(30 * copies.copy as integer) >= date '2025-06-23'
+"""
 RUN_EXTENDED = """
 select
     run_id,
@@ -108,6 +124,8 @@ select
 from read_parquet(?)
 """
 COUNTS = ("orders", "units", "returned_units", "product_view_sessions", "converted_sessions")
+RATES = ("return_rate", "conversion_rate")
+ROUNDED = "Ratios are fractions between 0 and 1, rounded to four places."
 SPLITS = "revenue, units, returned_units, return_rate"
 
 
@@ -148,6 +166,14 @@ def monday(day: date) -> date:
 def extend_before_the_samples(outputs: Path, samples: Path) -> None:
     """Add days with no activity from 2020-01-01 up to the sample's first day to the copy."""
     for table, sql in (("daily_totals", TOTALS_EXTENDED), ("run_metadata", RUN_EXTENDED)):
+        source, target = (folder / "parquet" / f"{table}.parquet" for folder in (samples, outputs))
+        with duckdb.connect() as con:
+            con.sql(sql, params=[str(source)]).write_parquet(str(target))
+
+
+def stretch_to_222_days(outputs: Path, samples: Path) -> None:
+    """Repeat the sample's 30 days backwards in the copy, to 222 days that end on the same day."""
+    for table, sql in (("daily_totals", TOTALS_STRETCHED), ("run_metadata", RUN_EXTENDED)):
         source, target = (folder / "parquet" / f"{table}.parquet" for folder in (samples, outputs))
         with duckdb.connect() as con:
             con.sql(sql, params=[str(source)]).write_parquet(str(target))
@@ -259,9 +285,18 @@ async def test_breakdown_return_rate_is_the_slices_returned_units_over_its_units
         client, start="2026-01-01", end="2026-01-30", metric="return_rate", by="category"
     )
     assert {s["name"]: s["value"] for s in found["slices"]} == {
-        name: pytest.approx(sums["returned_units"] / sums["units"])
+        name: pytest.approx(sums["returned_units"] / sums["units"], abs=0.00005)
         for name, sums in expected.items()
     }
+
+
+async def test_breakdown_rounds_return_rate_to_four_places(client: Client) -> None:
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric="return_rate", by="category"
+    )
+    values = [s["value"] for s in found["slices"]]
+    assert values != []
+    assert values == [round(value, 4) for value in values]
 
 
 async def test_breakdown_return_rate_is_null_when_the_slice_has_no_units(
@@ -370,6 +405,16 @@ async def test_breakdown_result_for_the_samples_is_under_4000_characters(
     assert len(text(result)) < 4000
 
 
+@pytest.mark.parametrize(
+    "name", ["metrics_breakdown", "metrics_daily_totals", "metrics_explain", "metrics_list"]
+)
+async def test_description_says_ratios_are_fractions_rounded_to_four_places(
+    client: Client, name: str
+) -> None:
+    (tool,) = (t for t in (await client.list_tools()).tools if t.name == name)
+    assert ROUNDED in " ".join((tool.description or "").split())
+
+
 async def test_daily_totals_at_day_grain_returns_the_published_rows(
     client: Client, samples: Path
 ) -> None:
@@ -377,11 +422,24 @@ async def test_daily_totals_at_day_grain_returns_the_published_rows(
     assert await totals(client, start="2026-01-01", end="2026-01-30") == {
         "grain": "day",
         "dates": [day["date"].isoformat() for day in days],
-        "values": {name: [day[name] for day in days] for name in METRICS["v1"]},
+        "values": {
+            name: [
+                pytest.approx(day[name], abs=0.00005) if name in RATES else day[name]
+                for day in days
+            ]
+            for name in METRICS["v1"]
+        },
         "provisional": [day["date"] >= date(2026, 1, 17) for day in days],
         "approximate": [],
         "restated_from": "2026-01-17",
     }
+
+
+@pytest.mark.parametrize("grain", ["day", "month"])
+async def test_daily_totals_rounds_ratios_to_four_places(client: Client, grain: str) -> None:
+    values = (await totals(client, start="2026-01-01", end="2026-01-30", grain=grain))["values"]
+    for name in RATES:
+        assert values[name] == [round(value, 4) for value in values[name]]
 
 
 async def test_daily_totals_returns_only_the_days_in_the_range(client: Client) -> None:
@@ -432,10 +490,11 @@ async def test_daily_totals_recomputes_ratios_from_the_summed_parts(
             values["revenue"][index] / values["orders"][index], abs=0.005
         )
         assert values["return_rate"][index] == pytest.approx(
-            values["returned_units"][index] / values["units"][index]
+            values["returned_units"][index] / values["units"][index], abs=0.00005
         )
         assert values["conversion_rate"][index] == pytest.approx(
-            values["converted_sessions"][index] / values["product_view_sessions"][index]
+            values["converted_sessions"][index] / values["product_view_sessions"][index],
+            abs=0.00005,
         )
 
 
@@ -550,6 +609,20 @@ async def test_daily_totals_30_day_result_for_all_metrics_is_under_6000_characte
     )
     assert not result.is_error
     assert len(text(result)) < 6000
+
+
+async def test_daily_totals_largest_result_for_stretched_samples_is_under_30000_characters(
+    client: Client, outputs: Path, samples: Path
+) -> None:
+    stretch_to_222_days(outputs, samples)
+    result = await client.call_tool(
+        "metrics_daily_totals", {"start": "2025-06-23", "end": "2026-01-30"}
+    )
+    assert not result.is_error, text(result)
+    found = result.structured_content
+    assert found is not None
+    assert len(found["dates"]) * len(found["values"]) == 1998
+    assert len(text(result)) < 30000
 
 
 async def test_explain_returns_the_full_definition_of_one_metric(client: Client) -> None:

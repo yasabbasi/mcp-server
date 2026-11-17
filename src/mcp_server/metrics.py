@@ -20,12 +20,14 @@ from mcp_server.outputs import (
 )
 from mcp_server.server import READ_ONLY, server
 
+ROUNDED = "Ratios are fractions between 0 and 1, rounded to four places."
 BREAKDOWN = (
     "One metric split by `by`, `category` or `distribution_center`, over `start` to `end` (ISO "
     "dates, both included). `slices` holds each slice's `name` and `value`, largest first; at "
     "most 50 are returned, and `truncated` says whether there were more. Only `revenue`, `units`, "
     "`returned_units` and `return_rate` can be split: the first three are summed per slice, and "
-    "`return_rate` is the slice's returned units over its units, null when it has no units. The "
+    "`return_rate` is the slice's returned units over its units, null when it has no units. "
+    f"{ROUNDED} The "
     "other metrics do not add up across slices, so call `metrics_daily_totals` for them. "
     "`includes_provisional` is true when the range reaches `restated_from`, so the numbers may "
     "still change. Call `metrics_freshness` for the dates the data covers."
@@ -36,7 +38,8 @@ DAILY_TOTALS = (
     "period that falls in the range, and `values` holds one list per metric, lined up with "
     "`dates`. `metrics` picks the metrics; leave it out for all of them. At `week` and `month`, "
     "counts and money are summed and `aov`, `return_rate` and `conversion_rate` are recomputed "
-    "from the summed parts; a ratio is null when its denominator is 0. The session metrics, named "
+    f"from the summed parts; a ratio is null when its denominator is 0. {ROUNDED} The session "
+    "metrics, named "
     "in `approximate`, are approximate above `day`, because a session that crosses midnight is "
     "counted on both days. A period is `provisional` when any of its days is on or after "
     "`restated_from`, so its numbers may still change. Call `metrics_freshness` for the dates "
@@ -45,7 +48,8 @@ DAILY_TOTALS = (
 EXPLAIN = (
     "The full definition of one metric: its `name`, display `label`, `unit` (`usd`, `count` or "
     "`ratio`), whether it is `additive`, a plain-language `description`, its `aggregation` "
-    "(`sum`, `count`, `count_distinct` or `ratio`) and its `formula`. Call it before explaining "
+    f"(`sum`, `count`, `count_distinct` or `ratio`) and its `formula`. {ROUNDED} Call it before "
+    "explaining "
     "what a number means. Call `metrics_list` for the valid names."
 )
 FRESHNESS = (
@@ -59,7 +63,7 @@ LIST = (
     "`count` or `ratio`) and whether it is `additive`. A metric is additive when summing it "
     "across categories and distribution centers gives the total. `orders`, the session counts "
     "and every ratio are not additive, because one order or session can span several slices. "
-    "Call `metrics_explain` for one metric's full definition."
+    f"{ROUNDED} Call `metrics_explain` for one metric's full definition."
 )
 QUALITY_REPORT = (
     "What the pipeline checked on the run the metrics come from: the run's `status` (`pass`, "
@@ -134,6 +138,7 @@ MAX_DAYS = 366
 MAX_FAILED = 50
 MAX_SLICES = 50
 MAX_VALUES = 2000
+RATIO_PLACES = 4
 
 Grain = Literal["day", "week", "month"]
 # These reach Claude as written, so a data file can't put a long string in them.
@@ -231,14 +236,18 @@ def summed(name: str) -> str:
     """Return the SQL that gives one metric over a group of rows from the summed parts."""
     if name in RATIOS:
         over, under = (f"sum({quoted(part)})" for part in RATIOS[name])
-        ratio = f"{over} / nullif({under}, 0)"
-        return f"round({ratio}, 2)" if name in MONEY else ratio
+        return f"round({over} / nullif({under}, 0), {2 if name in MONEY else RATIO_PLACES})"
     return f"round(sum({quoted(name)}), 2)" if name in MONEY else f"sum({quoted(name)})"
 
 
 def total(name: str, grain: Grain) -> str:
     """Return the SQL that gives one metric's total for a period of the grain."""
-    return f"any_value({quoted(name)})" if grain == "day" else summed(name)
+    if grain != "day":
+        return summed(name)
+    published = f"any_value({quoted(name)})"
+    if name in RATIOS and name not in MONEY:
+        return f"round({published}, {RATIO_PLACES})"
+    return published
 
 
 def check_range(run: Run, start: date, end: date) -> None:
