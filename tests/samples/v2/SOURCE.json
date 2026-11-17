@@ -1,0 +1,16 @@
+{
+  "repo": "yasabbasi/data-pipeline",
+  "tag": "contract-v2",
+  "commit": "dc875dd08b89198d6e3228a7f1c5addb321c0ca5",
+  "path": "samples/v2",
+  "sha256": {
+    "docs/contract.md": "a8d8ab38f086c9358ee808af268aa873df62f3f81fd569985e1696dd0016da14",
+    "samples/v2/parquet/daily_by_category.parquet": "f13ff96f833464be6920859b5ddb3dac8252ee3ce08f700b05e159725a618193",
+    "samples/v2/parquet/daily_by_distribution_center.parquet": "3b91e9d21d481fb8e62fef77b055a0d51e11922307cd554627faafb65089d8e0",
+    "samples/v2/parquet/daily_metrics.parquet": "5cab4cc418519b07f8cf8aa6c8dbee7527978222cd7c0a05b28cf093cd3a7bc0",
+    "samples/v2/parquet/daily_totals.parquet": "4fe36afacee24026c67395d5bfa6493be9b28e95b2a77e6323ff12968e27a045",
+    "samples/v2/parquet/metric_definitions.parquet": "deaf3c83528ebf0f22f47dd9ace33ada56044d35283d8a1f67d923fb663427b9",
+    "samples/v2/parquet/run_metadata.parquet": "871a59c63765eaeef98fcd2cc6127530ed30afd2c7a26880642394f42424c9b6",
+    "samples/v2/quality_report.json": "3aed11c1016dcb0e6bf5f8524fa0a92d7eb3bc41e4db41cfd3d44072ac407a1f"
+  }
+}

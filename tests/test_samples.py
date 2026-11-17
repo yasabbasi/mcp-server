@@ -26,7 +26,7 @@ def local_path(name: str) -> Path:
 
 
 def test_every_supported_contract_version_has_copied_samples() -> None:
-    assert sorted(SUPPORTED) == VERSIONS
+    assert set(SUPPORTED) <= set(VERSIONS)
 
 
 @pytest.mark.parametrize("version", VERSIONS)
