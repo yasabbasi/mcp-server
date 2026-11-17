@@ -4,7 +4,7 @@ A read-only MCP server that gives Claude tools over data-pipeline's published ou
 
 ```mermaid
 flowchart LR
-    pipeline["data-pipeline"] --> outputs[("parquet/*.parquet<br>quality_report.json<br>contract v1")]
+    pipeline["data-pipeline"] --> outputs[("parquet/*.parquet<br>quality_report.json<br>contract v1 or v2")]
     outputs --> server["mcp-server<br>read-only tools"]
     server -- "MCP over stdio" --> claude["Claude"]
 ```
@@ -13,14 +13,15 @@ flowchart LR
 
 | What | Number | How to check |
 |---|---|---|
-| Tests | 129, all offline on the copied samples, in about 3 seconds | `uv run pytest -q` |
+| Tests | 294, all offline on the copied samples of v1 and v2, in about 6 seconds | `uv run pytest -q` |
 | Tools | 6, all in the `metrics` group | `grep -c "@server.tool" src/mcp_server/metrics.py` |
-| Copied files | 6: five sample files and the contract doc, from data-pipeline's `contract-v1` tag at commit `1823391` | `tests/samples/v1/SOURCE.json`, and `make sync-samples` prints the count |
+| Copied files | 13: five v1 sample files from data-pipeline's `contract-v1` tag at commit `1823391`, and seven v2 sample files and the contract doc from its `contract-v2` tag at commit `dc875dd` | `tests/samples/v*/SOURCE.json`, and `make sync-samples` prints the count |
 | Size of a `metrics_freshness` result | 271 characters, for a live pipeline run | Count the result shown in the quickstart |
 
-The six tools:
+The six tools, each on outputs of contract v1 or v2:
 
-- `metrics_breakdown`: one metric split by category or distribution center over a date range.
+- `metrics_breakdown`: one metric split by category or distribution center over a date range;
+  any metric on v2, only the additive ones and `return_rate` on v1.
 - `metrics_daily_totals`: the published totals of a date range by day, week or month.
 - `metrics_explain`: the full definition of one metric.
 - `metrics_freshness`: the run the metrics come from, its data range and its quality status.
@@ -69,15 +70,19 @@ The demo outputs give the same shape with `"source": "fixtures"`.
 - **Outputs:** each tool call reads `$DATA_OUTPUT_DIR/parquet/<table>.parquet` with a fresh
   in-memory DuckDB. The server never writes, and there is no default directory: if the
   variable is unset or a file is missing, the tool says what to set.
-- **Contract:** [docs/contract.md](docs/contract.md) is a copy of data-pipeline's contract v1.
-  Every tool starts by loading the run. Outputs with another contract version, or with metric
+- **Contract:** [docs/contract.md](docs/contract.md) is a copy of data-pipeline's contract v2.
+  The server reads v1 and v2. Every tool starts by loading the run. Outputs with another
+  contract version, or with metric
   names that differ from the contract's, are refused with a message that says what to do.
 - **Tools:** each tool is one function in its group's module, such as
   [src/mcp_server/metrics.py](src/mcp_server/metrics.py). It is named `<group>_<noun>`, marked
   read-only, and returns a typed result. Ratios are fractions between 0 and 1, rounded to four
   places in SQL; money is rounded to two places and counts are integers.
-  - `metrics_breakdown` splits `revenue`, `units`, `returned_units` or `return_rate` by
-    category or distribution center, largest slice first, at most 50 slices.
+  - `metrics_breakdown` splits a metric by category or distribution center, largest slice
+    first, at most 50 slices. On v2 it reads `daily_by_category` or
+    `daily_by_distribution_center` and splits every metric, and says whether the slices add up
+    and whether the value is approximate. On v1 it splits only `revenue`, `units`,
+    `returned_units` or `return_rate`.
   - `metrics_daily_totals` returns the totals by day, week or month in columns, at most 2,000
     values, and marks the periods that may still change.
   - `metrics_explain` returns one metric's description, aggregation and formula.
@@ -91,15 +96,16 @@ The demo outputs give the same shape with `"source": "fixtures"`.
 - **Errors:** an error Claude can act on is a `ToolError` with a message that says what to
   do. The text of any other error stays in the server's log.
 - **Transport:** stdio. stdout carries the protocol, so the server logs to stderr.
-- **Samples:** the tests read [tests/samples/v1/](tests/samples/v1/), copied from
-  data-pipeline's `contract-v1` tag. `SOURCE.json` records the commit and a SHA-256 for each
+- **Samples:** every test runs on [tests/samples/v1/](tests/samples/v1/) and
+  [tests/samples/v2/](tests/samples/v2/), copied from data-pipeline's `contract-v1` and
+  `contract-v2` tags. `SOURCE.json` records the commit and a SHA-256 for each
   file. A test checks the files against it, and CI compares them with the tag itself.
 
 ## Limitations
 
-- **One tool group.** The six tools are all in `metrics`. Only `revenue`, `units`,
-  `returned_units` and `return_rate` can be split by category or distribution center.
-- **One contract version.** The server reads contract v1 and refuses anything else.
+- **One tool group.** The six tools are all in `metrics`. On v1 outputs only `revenue`,
+  `units`, `returned_units` and `return_rate` can be split by category or distribution center.
+- **Two contract versions.** The server reads contract v1 and v2 and refuses anything else.
 - **Local only.** It runs as a subprocess of the client over stdio. There is no HTTP
   transport and no authentication.
 - **No database file.** It reads the Parquet files and `quality_report.json`. It does not read

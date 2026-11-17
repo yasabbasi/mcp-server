@@ -70,14 +70,22 @@ def test_every_supported_version_has_a_metric_allowlist() -> None:
     assert set(METRICS) == set(SUPPORTED)
 
 
-def test_tables_are_the_first_tables_of_the_contract_doc() -> None:
-    documented = re.findall(r"^### `(\w+)`$", CONTRACT, flags=re.M)
-    assert list(TABLES) == documented[: len(TABLES)]
+def test_every_supported_version_has_a_table_allowlist() -> None:
+    assert set(TABLES) == set(SUPPORTED)
 
 
-def test_v1_metrics_are_the_metrics_of_the_contract_doc_in_order() -> None:
+def test_v2_tables_are_the_tables_of_the_contract_doc() -> None:
+    assert list(TABLES["v2"]) == re.findall(r"^### `(\w+)`$", CONTRACT, flags=re.M)
+
+
+def test_v1_tables_are_the_v2_tables_without_the_slice_tables() -> None:
+    assert TABLES["v1"] == tuple(t for t in TABLES["v2"] if not t.startswith("daily_by_"))
+
+
+@pytest.mark.parametrize("version", SUPPORTED)
+def test_metrics_are_the_metrics_of_the_contract_doc_in_order(version: str) -> None:
     definitions = CONTRACT.split("## Metric definitions")[1].split("\n## ")[0]
-    assert list(METRICS["v1"]) == re.findall(r"^\| `(\w+)` \|", definitions, flags=re.M)
+    assert list(METRICS[version]) == re.findall(r"^\| `(\w+)` \|", definitions, flags=re.M)
 
 
 def test_output_dir_is_read_from_the_environment(samples: Path) -> None:
@@ -94,9 +102,8 @@ def test_parquet_returns_the_path_of_a_published_table(samples: Path) -> None:
     assert parquet("daily_totals") == str(samples / "parquet" / "daily_totals.parquet")
 
 
-@pytest.mark.parametrize("table", TABLES)
-def test_every_contract_table_is_in_the_samples(table: str) -> None:
-    assert Path(parquet(table)).is_file()
+def test_every_contract_table_of_the_version_is_in_the_samples(version: str) -> None:
+    assert all(Path(parquet(table)).is_file() for table in TABLES[version])
 
 
 def test_a_missing_file_is_refused_with_what_to_set(outputs: Path) -> None:
@@ -122,11 +129,11 @@ def test_quoted_doubles_a_quote_inside_the_name() -> None:
     assert quoted('a"b') == '"a""b"'
 
 
-def test_load_run_returns_the_sample_run() -> None:
+def test_load_run_returns_the_sample_run(version: str) -> None:
     assert load_run() == Run(
-        run_id="sample-v1",
+        run_id=f"sample-{version}",
         source="fixtures",
-        contract_version="v1",
+        contract_version=version,
         generated_at="2026-01-31T00:00:00Z",
         data_min_date=date(2026, 1, 1),
         data_max_date=date(2026, 1, 30),
@@ -144,7 +151,9 @@ def test_an_unsupported_contract_version_is_refused_with_what_to_do(
     outputs: Path, samples: Path
 ) -> None:
     replace_table(outputs, samples, "run_metadata", RUN_AS_V9)
-    with pytest.raises(ToolError, match="contract v9. This server reads v1. Upgrade mcp-server"):
+    with pytest.raises(
+        ToolError, match="contract v9. This server reads v1, v2. Upgrade mcp-server"
+    ):
         load_run()
 
 
@@ -164,16 +173,18 @@ def test_a_run_whose_id_is_not_a_short_name_is_not_returned(outputs: Path, sampl
 
 
 def test_an_output_directory_with_glob_characters_reads_its_own_files(
-    samples: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    samples: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
     for name in ("out[1]", "out1"):
         shutil.copytree(samples, tmp_path / name)
-    replace_table(tmp_path / "out1", samples, "run_metadata", RUN_WITH, "other-run", "v1")
+    replace_table(tmp_path / "out1", samples, "run_metadata", RUN_WITH, "other-run", version)
     monkeypatch.setenv("DATA_OUTPUT_DIR", str(tmp_path / "out[1]"))
-    assert load_run().run_id == "sample-v1"
+    assert load_run().run_id == f"sample-{version}"
 
 
-def test_metric_names_outside_the_allowlist_are_refused(outputs: Path, samples: Path) -> None:
+def test_metric_names_outside_the_allowlist_are_refused(
+    outputs: Path, samples: Path, version: str
+) -> None:
     replace_table(outputs, samples, "metric_definitions", REVENUE_RENAMED)
-    with pytest.raises(ToolError, match="do not match contract v1"):
+    with pytest.raises(ToolError, match=f"do not match contract {version}"):
         load_run()
