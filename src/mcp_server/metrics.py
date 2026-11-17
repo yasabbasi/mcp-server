@@ -9,6 +9,16 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 from mcp_server.outputs import METRICS, Name, Run, load_run, parquet, quoted, rows
 from mcp_server.server import READ_ONLY, server
 
+BREAKDOWN = (
+    "One metric split by `by`, `category` or `distribution_center`, over `start` to `end` (ISO "
+    "dates, both included). `slices` holds each slice's `name` and `value`, largest first; at "
+    "most 50 are returned, and `truncated` says whether there were more. Only `revenue`, `units`, "
+    "`returned_units` and `return_rate` can be split: the first three are summed per slice, and "
+    "`return_rate` is the slice's returned units over its units, null when it has no units. The "
+    "other metrics do not add up across slices, so call `metrics_daily_totals` for them. "
+    "`includes_provisional` is true when the range reaches `restated_from`, so the numbers may "
+    "still change. Call `metrics_freshness` for the dates the data covers."
+)
 DAILY_TOTALS = (
     "The published totals from `start` to `end` (ISO dates, both included) by `grain`: `day`, "
     "`week` (starting Monday) or `month`. It returns columns: `dates` holds the first day of each "
@@ -68,6 +78,30 @@ PERIODS = {
     "week": "date_trunc('week', metric_date)",
     "month": "date_trunc('month', metric_date)",
 }
+# The placeholders take a column of SLICES and the summed SQL of a metric of SPLITS.
+SLICES_SQL = """
+select
+    {name} as name,
+    {value} as value
+from read_parquet(?)
+where metric_date between ? and ?
+group by {name}
+order by
+    value desc nulls last,
+    name
+limit ?
+"""
+SLICES = {"category": "category", "distribution_center": "distribution_center_name"}
+# The metrics that can be split by slice: the additive ones and the ratio of two of them.
+SPLITS = {"v1": ("revenue", "units", "returned_units", "return_rate")}
+# Why the other metrics can't be split, in the contract's words.
+NOT_ADDITIVE = {
+    "v1": (
+        "`revenue`, `units` and `returned_units` sum across categories and distribution centers. "
+        "`orders`, the session counts and every ratio do not, because one order or session can "
+        "span several slices."
+    ),
+}
 # Each ratio's numerator and denominator.
 RATIOS = {
     "aov": ("revenue", "orders"),
@@ -77,12 +111,36 @@ RATIOS = {
 MONEY = ("revenue", "aov")
 SESSION = ("product_view_sessions", "converted_sessions", "conversion_rate")
 MAX_DAYS = 366
+MAX_SLICES = 50
 MAX_VALUES = 2000
 
 Grain = Literal["day", "week", "month"]
 # These reach Claude as written, so a data file can't put a long string in them.
 Label = Annotated[str, StringConstraints(pattern=r"^[\w .-]{1,64}$")]
+SliceName = Annotated[str, StringConstraints(max_length=64)]
 Text = Annotated[str, StringConstraints(max_length=500)]
+
+
+class Slice(BaseModel):
+    """One category or distribution center with its value of the metric."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: SliceName
+    value: int | float | None
+
+
+class Breakdown(BaseModel):
+    """One metric of a date range split into slices, largest first."""
+
+    model_config = ConfigDict(frozen=True)
+
+    metric: Name
+    by: Name
+    slices: tuple[Slice, ...]
+    truncated: bool
+    includes_provisional: bool
+    restated_from: date
 
 
 class Metric(BaseModel):
@@ -135,15 +193,55 @@ def definitions(run: Run) -> list[Definition]:
     return sorted(found, key=lambda definition: order.index(definition.name))
 
 
-def total(name: str, grain: Grain) -> str:
-    """Return the SQL that gives one metric's total for a period of the grain."""
-    if grain == "day":
-        return f"any_value({quoted(name)})"
+def summed(name: str) -> str:
+    """Return the SQL that gives one metric over a group of rows from the summed parts."""
     if name in RATIOS:
         over, under = (f"sum({quoted(part)})" for part in RATIOS[name])
         ratio = f"{over} / nullif({under}, 0)"
         return f"round({ratio}, 2)" if name in MONEY else ratio
     return f"round(sum({quoted(name)}), 2)" if name in MONEY else f"sum({quoted(name)})"
+
+
+def total(name: str, grain: Grain) -> str:
+    """Return the SQL that gives one metric's total for a period of the grain."""
+    return f"any_value({quoted(name)})" if grain == "day" else summed(name)
+
+
+def check_range(run: Run, start: date, end: date) -> None:
+    """Refuse a date range that is backwards or outside the run's data."""
+    if end < start:
+        raise ToolError("`end` is before `start`. Swap them.")
+    if start < run.data_min_date or end > run.data_max_date:
+        raise ToolError(
+            f"The data covers {run.data_min_date} to {run.data_max_date}. Choose a range inside it."
+        )
+
+
+@server.tool(annotations=READ_ONLY, description=BREAKDOWN)
+def metrics_breakdown(start: date, end: date, metric: str, by: str) -> Breakdown:
+    """Return one metric per category or distribution center over a date range."""
+    run = load_run()
+    splits = SPLITS[run.contract_version]
+    if metric not in METRICS[run.contract_version]:
+        raise ToolError(f"That is not a metric. Use one of: {', '.join(splits)}.")
+    if metric not in splits:
+        raise ToolError(
+            f"`{metric}` can't be split. {NOT_ADDITIVE[run.contract_version]} Call "
+            f"`metrics_daily_totals` for its total, or split one of: {', '.join(splits)}."
+        )
+    if by not in SLICES:
+        raise ToolError(f"`by` is not a way to split. Use one of: {', '.join(SLICES)}.")
+    check_range(run, start, end)
+    sql = SLICES_SQL.format(name=quoted(SLICES[by]), value=summed(metric))
+    found = rows(sql, [parquet("daily_metrics"), start, end, MAX_SLICES + 1])
+    return Breakdown(
+        metric=metric,
+        by=by,
+        slices=tuple(Slice(name=name, value=value) for name, value in found[:MAX_SLICES]),
+        truncated=len(found) > MAX_SLICES,
+        includes_provisional=end >= run.restated_from,
+        restated_from=run.restated_from,
+    )
 
 
 @server.tool(annotations=READ_ONLY, description=DAILY_TOTALS)
@@ -155,12 +253,7 @@ def metrics_daily_totals(
     order = METRICS[run.contract_version]
     if metrics is not None and not set(metrics) <= set(order):
         raise ToolError(f"That is not a metric. Use any of: {', '.join(order)}.")
-    if end < start:
-        raise ToolError("`end` is before `start`. Swap them.")
-    if start < run.data_min_date or end > run.data_max_date:
-        raise ToolError(
-            f"The data covers {run.data_min_date} to {run.data_max_date}. Choose a range inside it."
-        )
+    check_range(run, start, end)
     if grain == "day" and (end - start).days >= MAX_DAYS:
         raise ToolError(
             f"That range is more than {MAX_DAYS} days. Use grain `week` or `month`, or a "
