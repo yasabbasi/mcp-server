@@ -13,13 +13,19 @@ flowchart LR
 
 | What | Number | How to check |
 |---|---|---|
-| Tests | 40, all offline on the copied samples, in about 1 second | `uv run pytest -q` |
-| Tools | 1, `metrics_freshness` | `grep -c "@server.tool" src/mcp_server/metrics.py` |
+| Tests | 129, all offline on the copied samples, in about 3 seconds | `uv run pytest -q` |
+| Tools | 6, all in the `metrics` group | `grep -c "@server.tool" src/mcp_server/metrics.py` |
 | Copied files | 6: five sample files and the contract doc, from data-pipeline's `contract-v1` tag at commit `1823391` | `tests/samples/v1/SOURCE.json`, and `make sync-samples` prints the count |
 | Size of a `metrics_freshness` result | 271 characters, for a live pipeline run | Count the result shown in the quickstart |
 
-This is the scaffold: the shared machinery and one tool. The tool list and a real exchange
-with Claude will be added here as the tools are built.
+The six tools:
+
+- `metrics_breakdown`: one metric split by category or distribution center over a date range.
+- `metrics_daily_totals`: the published totals of a date range by day, week or month.
+- `metrics_explain`: the full definition of one metric.
+- `metrics_freshness`: the run the metrics come from, its data range and its quality status.
+- `metrics_list`: every metric with its label, unit and whether it is additive.
+- `metrics_quality_report`: the run's quality status, row counts and checks that did not pass.
 
 ## Quickstart
 
@@ -31,12 +37,7 @@ make check
 ```
 
 The server reads outputs that [data-pipeline](https://github.com/yasabbasi/data-pipeline)
-published. Its demo writes a set to `data/demo/output/`, offline:
-
-```sh
-cd ../data-pipeline
-make demo
-```
+published. Its demo writes a set to `data/demo/output/`, offline; its README says how to run it.
 
 Register the server with Claude Code. `<dir>` is the full path of the output directory and
 `<repo>` is the full path of this repo:
@@ -73,8 +74,18 @@ The demo outputs give the same shape with `"source": "fixtures"`.
   names that differ from the contract's, are refused with a message that says what to do.
 - **Tools:** each tool is one function in its group's module, such as
   [src/mcp_server/metrics.py](src/mcp_server/metrics.py). It is named `<group>_<noun>`, marked
-  read-only, and returns a typed result. `metrics_freshness` returns the run id, source,
-  contract version, data range, publish time and quality status.
+  read-only, and returns a typed result. Ratios are fractions between 0 and 1, rounded to four
+  places in SQL; money is rounded to two places and counts are integers.
+  - `metrics_breakdown` splits `revenue`, `units`, `returned_units` or `return_rate` by
+    category or distribution center, largest slice first, at most 50 slices.
+  - `metrics_daily_totals` returns the totals by day, week or month in columns, at most 2,000
+    values, and marks the periods that may still change.
+  - `metrics_explain` returns one metric's description, aggregation and formula.
+  - `metrics_freshness` returns the run id, source, contract version, data range, publish time
+    and quality status.
+  - `metrics_list` returns every metric's name, label, unit and whether it is additive.
+  - `metrics_quality_report` returns the run's status, the rows each source table gave and
+    at most 50 checks that did not pass.
 - **SQL:** queries are built only from constants in this repo. Tool arguments and values read
   from the data are bound as parameters and never become SQL text.
 - **Errors:** an error Claude can act on is a `ToolError` with a message that says what to
@@ -86,12 +97,13 @@ The demo outputs give the same shape with `"source": "fixtures"`.
 
 ## Limitations
 
-- **One tool.** Only `metrics_freshness` exists so far. It does not return metric values.
+- **One tool group.** The six tools are all in `metrics`. Only `revenue`, `units`,
+  `returned_units` and `return_rate` can be split by category or distribution center.
 - **One contract version.** The server reads contract v1 and refuses anything else.
 - **Local only.** It runs as a subprocess of the client over stdio. There is no HTTP
   transport and no authentication.
-- **Parquet only.** It reads the Parquet files. It does not read `metrics.duckdb`, and no
-  tool reads `quality_report.json` yet.
+- **No database file.** It reads the Parquet files and `quality_report.json`. It does not read
+  `metrics.duckdb`.
 - **No cache.** Every call reads the files again, so it always sees the latest published run.
 
 ## Development
