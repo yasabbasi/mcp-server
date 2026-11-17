@@ -6,7 +6,18 @@ from typing import Annotated, Literal
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from mcp_server.outputs import METRICS, Name, Run, load_run, parquet, quoted, rows
+from mcp_server.outputs import (
+    METRICS,
+    Check,
+    Name,
+    Run,
+    TableRows,
+    load_quality_report,
+    load_run,
+    parquet,
+    quoted,
+    rows,
+)
 from mcp_server.server import READ_ONLY, server
 
 BREAKDOWN = (
@@ -49,6 +60,15 @@ LIST = (
     "across categories and distribution centers gives the total. `orders`, the session counts "
     "and every ratio are not additive, because one order or session can span several slices. "
     "Call `metrics_explain` for one metric's full definition."
+)
+QUALITY_REPORT = (
+    "What the pipeline checked on the run the metrics come from: the run's `status` (`pass`, "
+    "`warn` or `fail`), the `rows_ingested` and `rows_quarantined` of each source table in "
+    "`tables`, and the checks that did not pass in `failed_checks`, each with its `name`, "
+    "`table`, `severity`, `status` and `message`. At most 50 are returned: `more_failed` counts "
+    "the ones left out, and `passed_checks` counts the checks that passed. Look here before "
+    "trusting a number from a run whose status is not `pass`; `metrics_freshness` gives that "
+    "status as `quality_status`."
 )
 
 # The columns are in the order of Definition's fields.
@@ -111,6 +131,7 @@ RATIOS = {
 MONEY = ("revenue", "aov")
 SESSION = ("product_view_sessions", "converted_sessions", "conversion_rate")
 MAX_DAYS = 366
+MAX_FAILED = 50
 MAX_SLICES = 50
 MAX_VALUES = 2000
 
@@ -168,6 +189,19 @@ class Metrics(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     metrics: tuple[Metric, ...]
+
+
+class QualityReport(BaseModel):
+    """The run's quality report, with only the checks that did not pass."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: Name
+    status: Name
+    tables: tuple[TableRows, ...]
+    failed_checks: tuple[Check, ...]
+    more_failed: int
+    passed_checks: int
 
 
 class Totals(BaseModel):
@@ -303,3 +337,18 @@ def metrics_list() -> Metrics:
     """Return every metric with its label, unit and whether it is additive."""
     found = definitions(load_run())
     return Metrics(metrics=tuple(Metric(**dict(m)) for m in found))
+
+
+@server.tool(annotations=READ_ONLY, description=QUALITY_REPORT)
+def metrics_quality_report() -> QualityReport:
+    """Return the run's quality status, rows per source table and checks that did not pass."""
+    report = load_quality_report(load_run())
+    failed = [check for check in report.checks if check.status != "pass"]
+    return QualityReport(
+        run_id=report.run_id,
+        status=report.status,
+        tables=report.tables,
+        failed_checks=tuple(failed[:MAX_FAILED]),
+        more_failed=max(len(failed) - MAX_FAILED, 0),
+        passed_checks=len(report.checks) - len(failed),
+    )

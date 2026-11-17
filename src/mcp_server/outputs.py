@@ -1,6 +1,7 @@
 """Read data-pipeline's published outputs: the Parquet tables and the run that made them."""
 
 import glob
+import json
 import os
 import re
 from datetime import date
@@ -9,9 +10,10 @@ from typing import Annotated, Any
 
 import duckdb
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 SUPPORTED = ("v1",)
+MAX_MESSAGE = 300
 TABLES = ("daily_metrics", "daily_totals", "metric_definitions", "run_metadata")
 METRICS: dict[str, tuple[str, ...]] = {
     "v1": (
@@ -73,6 +75,45 @@ class Run(BaseModel):
     quality_status: Name
 
 
+class TableRows(BaseModel):
+    """The rows one source table gave the run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    table: Name
+    rows_ingested: int
+    rows_quarantined: int
+
+
+class Check(BaseModel):
+    """One quality check of the run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: Name
+    table: Name
+    severity: Name
+    status: Name
+    message: str
+
+    @field_validator("message")
+    @classmethod
+    def cut(cls, message: str) -> str:
+        """Cut the message to MAX_MESSAGE characters."""
+        return message[:MAX_MESSAGE]
+
+
+class Report(BaseModel):
+    """The run's quality report."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: Name
+    status: Name
+    tables: tuple[TableRows, ...]
+    checks: tuple[Check, ...]
+
+
 def output_dir() -> Path:
     """Return the directory data-pipeline published to, named by DATA_OUTPUT_DIR."""
     value = os.environ.get(ENV)
@@ -102,16 +143,37 @@ def quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def unsupported(subject: str, version: object) -> ToolError:
+    """Return the refusal of a contract version, naming it only when it is a version name."""
+    named = isinstance(version, str) and re.fullmatch(r"v\d{1,3}", version)
+    return ToolError(
+        f"{subject} contract {version if named else 'of an unknown version'}. "
+        f"This server reads {', '.join(SUPPORTED)}. Upgrade mcp-server to read them."
+    )
+
+
+def load_quality_report(run: Run) -> Report:
+    """Return the run's quality report, refusing one this server can't read or of another run."""
+    path = output_dir() / "quality_report.json"
+    if not path.is_file():
+        raise ToolError(f"{path} was not found. {SET_ENV}")
+    found = json.loads(path.read_text())
+    if found.get("contract_version") not in SUPPORTED:
+        raise unsupported("The quality report uses", found.get("contract_version"))
+    if found.get("run_id") != run.run_id:
+        raise ToolError(
+            "The quality report is from another run than the tables. Run data-pipeline again, "
+            "so it publishes them as a set."
+        )
+    return Report(**found)
+
+
 def load_run() -> Run:
     """Return the published run, refusing outputs this server can't read."""
     path = parquet("run_metadata")
     versions = [str(version) for (version,) in rows(VERSION_SQL, [path])]
     if len(versions) != 1 or versions[0] not in SUPPORTED:
-        named = len(versions) == 1 and re.fullmatch(r"v\d{1,3}", versions[0])
-        raise ToolError(
-            f"The outputs use contract {versions[0] if named else 'of an unknown version'}. "
-            f"This server reads {', '.join(SUPPORTED)}. Upgrade mcp-server to read them."
-        )
+        raise unsupported("The outputs use", versions[0] if len(versions) == 1 else None)
     (row,) = rows(RUN_SQL, [path])
     run = Run(**dict(zip(Run.model_fields, row, strict=True)))
     names = [name for (name,) in rows(METRIC_NAMES_SQL, [parquet("metric_definitions")])]
