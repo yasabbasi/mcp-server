@@ -79,7 +79,35 @@ select
     quality_status
 from read_parquet(?)
 """
+SAMPLE_SLICES = """
+select
+    metric_date,
+    category,
+    distribution_center_name,
+    revenue,
+    units,
+    returned_units
+from read_parquet(?)
+"""
+METRICS_WITHOUT_UNITS = """
+select
+    metric_date,
+    category,
+    distribution_center_id,
+    distribution_center_name,
+    revenue,
+    orders,
+    cast(0 as bigint) as units,
+    cast(0 as bigint) as returned_units,
+    aov,
+    return_rate,
+    product_view_sessions,
+    converted_sessions,
+    conversion_rate
+from read_parquet(?)
+"""
 COUNTS = ("orders", "units", "returned_units", "product_view_sessions", "converted_sessions")
+SPLITS = "revenue, units, returned_units, return_rate"
 
 
 def text(result: CallToolResult) -> str:
@@ -124,6 +152,24 @@ def extend_before_the_samples(outputs: Path, samples: Path) -> None:
             con.sql(sql, params=[str(source)]).write_parquet(str(target))
 
 
+def sample_slices(samples: Path, by: str, start: date, end: date) -> dict[str, dict[str, Any]]:
+    """Return the sample's additive metrics summed per slice over the dates, by slice name."""
+    with duckdb.connect() as con:
+        found = con.execute(SAMPLE_SLICES, [str(samples / "parquet" / "daily_metrics.parquet")])
+        days = found.fetchall()
+    sums: dict[str, dict[str, Any]] = {}
+    for day, category, center, revenue, units, returned_units in days:
+        if start <= day <= end:
+            slice_sums = sums.setdefault(
+                category if by == "category" else center,
+                {"revenue": 0, "units": 0, "returned_units": 0},
+            )
+            slice_sums["revenue"] += revenue
+            slice_sums["units"] += units
+            slice_sums["returned_units"] += returned_units
+    return sums
+
+
 async def totals(client: Client, **arguments: object) -> dict[str, Any]:
     result = await client.call_tool("metrics_daily_totals", arguments)
     assert not result.is_error, text(result)
@@ -136,6 +182,169 @@ async def refusal(client: Client, **arguments: object) -> str:
     result = await client.call_tool("metrics_daily_totals", arguments)
     assert result.is_error
     return text(result)
+
+
+async def breakdown(client: Client, **arguments: object) -> dict[str, Any]:
+    result = await client.call_tool("metrics_breakdown", arguments)
+    assert not result.is_error, text(result)
+    found: dict[str, Any] | None = result.structured_content
+    assert found is not None
+    return found
+
+
+async def breakdown_refusal(client: Client, **arguments: object) -> str:
+    result = await client.call_tool("metrics_breakdown", arguments)
+    assert result.is_error
+    return text(result)
+
+
+@pytest.mark.parametrize("by", ["category", "distribution_center"])
+@pytest.mark.parametrize("metric", ["revenue", "units", "returned_units"])
+async def test_breakdown_sums_an_additive_metric_per_slice(
+    client: Client, samples: Path, by: str, metric: str
+) -> None:
+    expected = sample_slices(samples, by, date(2026, 1, 5), date(2026, 1, 20))
+    found = await breakdown(client, start="2026-01-05", end="2026-01-20", metric=metric, by=by)
+    assert found["metric"] == metric
+    assert found["by"] == by
+    assert {s["name"]: s["value"] for s in found["slices"]} == {
+        name: pytest.approx(sums[metric], abs=0.005) for name, sums in expected.items()
+    }
+
+
+@pytest.mark.parametrize("metric", ["units", "returned_units"])
+async def test_breakdown_counts_are_integers(client: Client, metric: str) -> None:
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric=metric, by="category"
+    )
+    assert all(type(s["value"]) is int for s in found["slices"])
+
+
+@pytest.mark.parametrize("by", ["category", "distribution_center"])
+async def test_breakdown_puts_the_largest_slice_first(client: Client, by: str) -> None:
+    found = await breakdown(client, start="2026-01-01", end="2026-01-30", metric="revenue", by=by)
+    values = [s["value"] for s in found["slices"]]
+    assert len(values) > 1
+    assert values == sorted(values, reverse=True)
+
+
+async def test_breakdown_return_rate_is_the_slices_returned_units_over_its_units(
+    client: Client, samples: Path
+) -> None:
+    expected = sample_slices(samples, "category", date(2026, 1, 1), date(2026, 1, 30))
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric="return_rate", by="category"
+    )
+    assert {s["name"]: s["value"] for s in found["slices"]} == {
+        name: pytest.approx(sums["returned_units"] / sums["units"])
+        for name, sums in expected.items()
+    }
+
+
+async def test_breakdown_return_rate_is_null_when_the_slice_has_no_units(
+    client: Client, outputs: Path, samples: Path
+) -> None:
+    source, target = (folder / "parquet" / "daily_metrics.parquet" for folder in (samples, outputs))
+    with duckdb.connect() as con:
+        con.sql(METRICS_WITHOUT_UNITS, params=[str(source)]).write_parquet(str(target))
+    found = await breakdown(
+        client, start="2026-01-01", end="2026-01-30", metric="return_rate", by="category"
+    )
+    assert found["slices"] != []
+    assert all(s["value"] is None for s in found["slices"])
+
+
+@pytest.mark.parametrize(
+    "metric", ["orders", "aov", "product_view_sessions", "converted_sessions", "conversion_rate"]
+)
+async def test_breakdown_refuses_a_metric_that_does_not_add_up_across_slices(
+    client: Client, metric: str
+) -> None:
+    message = await breakdown_refusal(
+        client, start="2026-01-01", end="2026-01-30", metric=metric, by="category"
+    )
+    assert (
+        "`orders`, the session counts and every ratio do not, because one order or session can "
+        "span several slices"
+    ) in message
+    assert "Call `metrics_daily_totals` for its total" in message
+    assert f"split one of: {SPLITS}." in message
+
+
+async def test_breakdown_refuses_an_unknown_metric_with_the_metrics_it_splits(
+    client: Client,
+) -> None:
+    message = await breakdown_refusal(
+        client, start="2026-01-01", end="2026-01-30", metric="profit", by="category"
+    )
+    assert f"That is not a metric. Use one of: {SPLITS}." in message
+
+
+async def test_breakdown_refuses_an_unknown_by_with_the_valid_values(client: Client) -> None:
+    message = await breakdown_refusal(
+        client, start="2026-01-01", end="2026-01-30", metric="revenue", by="region"
+    )
+    assert "Use one of: category, distribution_center." in message
+
+
+async def test_breakdown_returns_at_most_the_limit_and_says_there_were_more(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arguments = {"start": "2026-01-01", "end": "2026-01-30", "metric": "revenue", "by": "category"}
+    everything = await breakdown(client, **arguments)
+    assert everything["truncated"] is False
+    assert len(everything["slices"]) > 2
+    monkeypatch.setattr("mcp_server.metrics.MAX_SLICES", 2)
+    found = await breakdown(client, **arguments)
+    assert found["truncated"] is True
+    assert found["slices"] == everything["slices"][:2]
+
+
+async def test_breakdown_is_not_truncated_when_the_slices_equal_the_limit(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arguments = {"start": "2026-01-01", "end": "2026-01-30", "metric": "revenue", "by": "category"}
+    everything = await breakdown(client, **arguments)
+    monkeypatch.setattr("mcp_server.metrics.MAX_SLICES", len(everything["slices"]))
+    assert await breakdown(client, **arguments) == everything
+
+
+@pytest.mark.parametrize(("end", "provisional"), [("2026-01-16", False), ("2026-01-17", True)])
+async def test_breakdown_includes_provisional_when_the_range_reaches_restated_from(
+    client: Client, end: str, provisional: bool
+) -> None:
+    found = await breakdown(client, start="2026-01-01", end=end, metric="units", by="category")
+    assert found["includes_provisional"] is provisional
+    assert found["restated_from"] == "2026-01-17"
+
+
+async def test_breakdown_refuses_an_end_before_the_start(client: Client) -> None:
+    message = await breakdown_refusal(
+        client, start="2026-01-10", end="2026-01-09", metric="revenue", by="category"
+    )
+    assert "`end` is before `start`. Swap them." in message
+
+
+@pytest.mark.parametrize(
+    ("start", "end"), [("2025-12-31", "2026-01-30"), ("2026-01-01", "2026-01-31")]
+)
+async def test_breakdown_refuses_a_range_outside_the_data_and_names_it(
+    client: Client, start: str, end: str
+) -> None:
+    message = await breakdown_refusal(client, start=start, end=end, metric="revenue", by="category")
+    assert "The data covers 2026-01-01 to 2026-01-30. Choose a range inside it." in message
+
+
+@pytest.mark.parametrize("by", ["category", "distribution_center"])
+async def test_breakdown_result_for_the_samples_is_under_4000_characters(
+    client: Client, by: str
+) -> None:
+    result = await client.call_tool(
+        "metrics_breakdown",
+        {"start": "2026-01-01", "end": "2026-01-30", "metric": "revenue", "by": by},
+    )
+    assert not result.is_error
+    assert len(text(result)) < 4000
 
 
 async def test_daily_totals_at_day_grain_returns_the_published_rows(
