@@ -1,7 +1,8 @@
-# Output contract v1
+# Output contract v2
 
 This is what data-pipeline promises to the repos that read its output: mcp-server and
-task-agent. The machine-readable version is the JSON Schema in [`contract/v1/`](../contract/v1/),
+task-agent. The pipeline publishes v2. The machine-readable version is the JSON Schema in
+[`contract/v2/`](../contract/v2/),
 one file per table plus the quality report. Metric definitions come from
 [`metrics.yaml`](../metrics.yaml).
 
@@ -10,7 +11,7 @@ Next: demand-forecast will read the same output.
 ## Versioning
 
 - **Any** change to a table, column, type, grain or metric definition creates a new
-  version directory (`contract/v2/`). Published versions are never edited.
+  version directory (`contract/v3/`). Published versions are never edited.
 - `contract/checksums.json` pins the SHA-256 of each version's schema files, and
   `samples/checksums.json` pins each version's sample files. CI fails if a published version
   changes.
@@ -25,7 +26,7 @@ Next: demand-forecast will read the same output.
 | DuckDB database | `<output>/metrics.duckdb`, one table per contract table (schema `main`) |
 | Parquet | `<output>/parquet/<table>.parquet`, one file per table |
 | Quality report | `<output>/quality_report.json` |
-| Sample for tests | `samples/v1/` (committed; built from synthetic fixtures by `make sample`) |
+| Sample for tests | `samples/v2/` (committed; built from synthetic fixtures by `make sample`); `samples/v1/` stays for v1 readers |
 
 Outputs are replaced as a set at the end of a successful run. A run that fails a
 critical quality check publishes nothing; its report goes to `data/runs/<run_id>/`.
@@ -45,7 +46,8 @@ critical quality check publishes nothing; its report goes to `data/runs/<run_id>
   runs with `--full-refresh`.
 - **Additivity:** `revenue`, `units` and `returned_units` sum across categories and
   distribution centers. `orders`, the session counts and every ratio do not, because one
-  order or session can span several slices. For totals, read `daily_totals`.
+  order or session can span several slices. For totals, read `daily_totals`; for one
+  category or distribution center, read `daily_by_category` or `daily_by_distribution_center`.
 
 ## Tables
 
@@ -105,7 +107,7 @@ Exactly one row, describing the run that produced the outputs.
 | Column | Type | Description |
 |---|---|---|
 | `run_id` | VARCHAR | Unique run id, also in the quality report |
-| `contract_version` | VARCHAR | Always `v1` here |
+| `contract_version` | VARCHAR | Always `v2` here |
 | `pipeline_version` | VARCHAR | Package version |
 | `source` | VARCHAR | `bigquery` (live thelook) or `fixtures` (synthetic) |
 | `generated_at` | TIMESTAMPTZ | Publish time, UTC |
@@ -119,7 +121,7 @@ Exactly one row, describing the run that produced the outputs.
 One JSON document per run: `contract_version`, `run_id`, `generated_at`, `source`,
 `status` (`pass`/`warn`/`fail`), `tables` (rows ingested and quarantined per source
 table) and `checks` (name, table, check type, severity, status, failed rows, message).
-See `contract/v1/quality-report.schema.json` for the exact shape.
+See `contract/v2/quality-report.schema.json` for the exact shape.
 
 ## Metric definitions
 
@@ -153,6 +155,42 @@ this slice and purchased something". It doesn't mean they bought that product.
 **Sessions across midnight:** session metrics are dated by the product view, so a session
 that views products on both sides of midnight UTC counts on each of those days. About 11%
 of live sessions span two or more dates.
+
+## Slice tables, new in v2
+
+v2 keeps every v1 schema unchanged except the version (`$id` and `contract_version` =
+`v2`) and adds two tables. In v1, `orders`, the session counts and the ratios exist only
+per category × distribution center or in total: one order or session can span several
+slices, so they can't be summed up to a category or a distribution center. v2 computes
+every metric at each of those grains directly, from the same sources and `metrics.yaml`.
+
+Both new tables are sparse: a row exists only when the slice had sales or product views
+that day. `revenue`, `units` and `returned_units` are additive. `orders`,
+`product_view_sessions` and `converted_sessions` are distinct within the slice, and they
+and every ratio must not be summed across slices. For totals, read `daily_totals`.
+
+### `daily_by_category`
+
+Grain: one row per `metric_date` × `category`.
+
+| Column | Type | Null |
+|---|---|---|
+| `metric_date` | DATE | no |
+| `category` | VARCHAR | no |
+| `revenue`, `orders`, `units`, `returned_units`, `product_view_sessions`, `converted_sessions` | as in `daily_metrics` | no |
+| `aov`, `return_rate`, `conversion_rate` | DOUBLE | yes |
+
+### `daily_by_distribution_center`
+
+Grain: one row per `metric_date` × `distribution_center_id`.
+
+| Column | Type | Null |
+|---|---|---|
+| `metric_date` | DATE | no |
+| `distribution_center_id` | BIGINT | no |
+| `distribution_center_name` | VARCHAR | no |
+| `revenue`, `orders`, `units`, `returned_units`, `product_view_sessions`, `converted_sessions` | as in `daily_metrics` | no |
+| `aov`, `return_rate`, `conversion_rate` | DOUBLE | yes |
 
 ## Reading the outputs
 

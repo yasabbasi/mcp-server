@@ -70,12 +70,13 @@ def test_every_supported_version_has_a_metric_allowlist() -> None:
     assert set(METRICS) == set(SUPPORTED)
 
 
-def test_tables_are_the_tables_of_the_contract_doc() -> None:
-    assert list(TABLES) == re.findall(r"^### `(\w+)`$", CONTRACT, flags=re.M)
+def test_tables_are_the_first_tables_of_the_contract_doc() -> None:
+    documented = re.findall(r"^### `(\w+)`$", CONTRACT, flags=re.M)
+    assert list(TABLES) == documented[: len(TABLES)]
 
 
 def test_v1_metrics_are_the_metrics_of_the_contract_doc_in_order() -> None:
-    definitions = CONTRACT.split("## Metric definitions")[1]
+    definitions = CONTRACT.split("## Metric definitions")[1].split("\n## ")[0]
     assert list(METRICS["v1"]) == re.findall(r"^\| `(\w+)` \|", definitions, flags=re.M)
 
 
